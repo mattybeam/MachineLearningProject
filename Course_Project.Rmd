@@ -1,0 +1,140 @@
+---
+title: "Weight Lifting Exercise"
+output: html_document
+---
+
+```{r load_data, echo = FALSE,cache=TRUE}
+download.file(url = 'https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv',destfile = 'train.csv',method = "curl")
+move <- read.csv('train.csv')
+library(caret)
+library(plyr)
+library(dplyr)
+library(doMC)
+library(randomForest)
+```
+
+Summary
+=================
+
+In this project, our goal is to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants to predict the manner in which they did a unilateral dumbbell biceps curl: exactly to the specification (ClassA), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D), or throwing the hips to the front (Class E). 
+
+Given the highly irregular patterns in the data, we elect to use a random forest to predict the classes. After pre-processing the data to eliminate variables with near-zero variation and variables with many NA values, we estimate a random forest on all remaining covariates. With cross validation on a small test data set from our training data, we estimate out-of-sample error to be on the order of 1% or less, suggesting excellent predictive abilities.  
+
+Data Analysis
+===================
+
+Our first step is to split the data into a training set and a test set and do some exploratory analysis on the training set. We set the seed for reproducibility.
+```{r split_data}
+set.seed(51688)
+inTrain <- createDataPartition(y = move$classe,p = 0.7,list = FALSE)
+training <- move[inTrain,]
+testing <- move[-inTrain,]
+```
+
+As can be seen from the plot below (which is representative of other such plots of covariate versus class), there is considerable noise in the data, and it is not clear how to distinguish between classes based on any given covariate. 
+
+```{r explore}
+qplot(avg_roll_belt,classe,data = training)
+```
+
+Data Pre-Processing and Model Estimation
+============================================
+
+Due to the noisiness of the data, we choose to use a random forest to fit the training data, given its accuracy, even for "highly irregular patterns in data" (Wikipedia 2015). We first work to clean up the data a bit. First, we can remove the first seven variables, which deal with identification of the user and when the measurements were taken, as they will play no part in model formulation.
+
+```{r remove}
+training <- select(training,-(X:num_window))
+```
+
+Now, we can find covariates with zero, or near-zero variance and remove them. This will get rid of variables that do not differ much between observations and so would not be useful for prediction of class.
+
+```{r nzv}
+zerovar <- nearZeroVar(training[,1:152],saveMetrics = TRUE)
+remove <- names(training) %in% row.names(zerovar[zerovar$nzv,])
+training <- training[,!remove]
+```
+
+Finally, we remove variables with many NA values, as they will not be useful in model prediction. By looking at the proportion of NA values in each column, we see that columns either have a high proportion of NA values (97.9%) or none, so we simply remove all covariates with any NA value.  
+
+```{r removeNA}
+apply(training,MARGIN = 2,FUN = function(x) sum(is.na(x))/length(x))
+training <- training[,apply(training,MARGIN = 2,FUN = function(x) !any(is.na(x)))]
+```
+
+Now we need to select the same columns in the testing data for cross-validation at a later point. 
+
+```{r transform_test}
+testing <- testing[,names(training)]
+```
+
+Now, we can run a random forest model on the training data. We run a the random forest including all possible predictors. We run the risk of overfitting the training data in this way, but, as we will see in the cross validation, we do not appear to have issues of overfitting.
+
+```{r random_forest, cache=TRUE}
+model <- randomForest(classe~.,data = training)
+```
+
+
+Prediction and Cross Validation
+======================================
+
+Now, with this model we can predict out-of-sample error by first predicting the class in the testing set and then calculating the confusion matrix.
+
+```{r outOfSample}
+prediction <- predict(model,testing[,-ncol(testing)],type = "response")
+confusionMatrix(prediction,testing$classe)
+```
+
+Therefore, we predict an accuracy of about 99% overall. This suggests an out-of-sample error rate of about 1% or less. It looks like, from the confusion matrix, that classes C and D are the least well separated, which makes sense given the nature of those movements (C is lift only halfway and D is lower only halfway).
+
+
+Application to Test Cases 
+============================
+
+We now apply the model to the twenty test cases provided. First, we read in the test data.
+
+``` {r test}
+download.file(url = 'https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv',destfile = 'test.csv',method = 'curl')
+test <- read.csv('test.csv')
+```
+
+Now, we need to pre-process the data so it is in the same format as the training data.
+
+``` {r preprocess}
+test <- test[,names(test) %in% names(training)]
+```
+
+Finally, we predict the class and write the results to individual text files for evaluation.
+
+``` {r predict}
+predictions <- predict(model,newdata=test)
+pml_write_files = function(x){
+     n = length(x)
+     for(i in 1:n){
+         filename = paste0("problem_id_",i,".txt")
+         write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+     }
+}
+pml_write_files(predictions)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
